@@ -1,0 +1,56 @@
+from flask import Flask, request, jsonify
+import os
+import pytesseract
+from PIL import Image
+import requests
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = "uploads"
+TEXT_FILE = "output.txt"
+GROQ_API_KEY = "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"  # Replace with your API key
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+def clean_upload_folder():
+    for file in os.listdir(UPLOAD_FOLDER):
+        os.remove(os.path.join(UPLOAD_FOLDER, file))
+
+def correct_grammar(text):
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    payload = {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": f"Correct this text:\\n\\n{text}"}]}
+    response = requests.post(GROQ_API_URL, headers=headers, json=payload)
+    return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip() if response.status_code == 200 else "Error"
+
+@app.route("/upload", methods=["POST"])
+def upload_image():
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
+
+    file = request.files["image"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    clean_upload_folder()
+    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file.save(file_path)
+
+    text = pytesseract.image_to_string(Image.open(file_path))
+    corrected_text = correct_grammar(text)
+
+    with open(TEXT_FILE, "w") as f:
+        f.write(corrected_text)
+
+    return jsonify({"message": "Processing complete", "corrected_text": corrected_text})
+
+@app.route("/get_text", methods=["GET"])
+def get_text():
+    if os.path.exists(TEXT_FILE):
+        with open(TEXT_FILE, "r") as f:
+            return jsonify({"corrected_text": f.read()})
+    return jsonify({"message": "No processed text available"}), 404
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
